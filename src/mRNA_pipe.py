@@ -4,8 +4,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.inspection import permutation_importance
 import glob
 from sksurv.ensemble import RandomSurvivalForest
-from util import t_test, t_test_feature_selection, n_equal_slices, TruSight15, TruSight170, pearson_feature_selection, cox_feature_selection, PCA_feature_selection
-from train import regression_evaluate, rsf_train, grid_cross_validate, drop_suffix_from_key, c_index_scorer
+from util import t_test, t_test_feature_selection, n_equal_slices, TruSight15, TruSight170, pearson_feature_selection, cox_feature_selection, PCA_feature_selection, kaplan_splitting
+from train import regression_evaluate, rsf_train, grid_cross_validate, drop_suffix_from_key, c_index_scorer, log_rank
 from sksurv.util import Surv
 import tqdm
 
@@ -98,9 +98,10 @@ def single_nested_feature_selection(seed):
     out_cvals = []
     important_features = []
     feature_importance = []
+    
     for feature_selection,feature_kwarg in zip(feature_selection_algorithms, feature_kwargs):
         
-
+        log_ranks = []
         c_vals = []
 
         rs = np.random.RandomState(np.random.MT19937(np.random.SeedSequence(seed)))
@@ -133,11 +134,15 @@ def single_nested_feature_selection(seed):
             survival_train = Surv.from_arrays(event=train_labels, time=train_times)
             survival_test = Surv.from_arrays(event=test_labels, time=test_times)
             grid_search = rsf_train(train_set, survival_train)
-
+            train_risk = grid_search.predict(train_set)
+            test_risk = grid_search.predict(test_set)
 
             res = regression_evaluate(grid_search, test_set, test_labels, test_times)
 
             result = permutation_importance(grid_search.best_estimator_, test_set, survival_test, n_repeats=10, random_state=42, scoring=c_index_scorer)
+            group1, group2 = kaplan_splitting(train_labels, train_times, train_risk, test_labels, test_times, test_risk)
+            lr = log_rank(group1, group2).pvalue
+            log_ranks.append(lr)
             feature_importance += list(result.importances_mean)
             print(res[0])
             c_vals.append(res[0])
@@ -148,6 +153,8 @@ def single_nested_feature_selection(seed):
     feature_df.to_csv('data/mRNA_feature_importance.csv')
 
     print(f"{np.mean(out_cvals, axis=1)} +/- {2*np.std(out_cvals, axis=1)/np.sqrt(5)}")
+    print(log_ranks)
+    print(f"{np.mean(log_ranks)} +/- {2*np.std(log_ranks)/np.sqrt(5)}")
     return 
 
 def doubly_nested_feature(seed):

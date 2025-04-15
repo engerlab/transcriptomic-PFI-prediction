@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 import tqdm
 import glob
-from util import t_test_feature_selection, n_equal_slices, cox_feature_selection, PCA_feature_selection, pearson_feature_selection
-from train import regression_evaluate, rsf_train, c_index_scorer
+from util import t_test_feature_selection, n_equal_slices, cox_feature_selection, PCA_feature_selection, pearson_feature_selection, kaplan_splitting
+from train import regression_evaluate, rsf_train, c_index_scorer, log_rank
 from sklearn.inspection import permutation_importance
 from sksurv.util import Surv
 
@@ -77,6 +77,7 @@ def main(seed):
     feature_importance = []
 
     for feature_selection,feature_kwarg in zip(feature_selection_algorithms, feature_kwargs):
+        log_ranks = []
         c_vals = []
 
         rs = np.random.RandomState(np.random.MT19937(np.random.SeedSequence(seed)))
@@ -117,7 +118,11 @@ def main(seed):
             survival_train = Surv.from_arrays(event=train_labels, time=train_times)
             survival_test = Surv.from_arrays(event=test_labels, time=test_times)
             grid_search = rsf_train(train_set, survival_train)
-
+            train_risk = grid_search.predict(train_set)
+            test_risk = grid_search.predict(test_set)
+            group1, group2 = kaplan_splitting(train_labels, train_times, train_risk, test_labels, test_times, test_risk)
+            lr = log_rank(group1, group2).pvalue
+            log_ranks.append(lr)
             res = regression_evaluate(grid_search, test_set, test_labels, test_times)
             result = permutation_importance(grid_search.best_estimator_, test_set, survival_test, n_repeats=10, random_state=42, scoring=c_index_scorer)
             feature_importance += list(result.importances_mean)
@@ -129,12 +134,14 @@ def main(seed):
     feature_res =[[i,j] for i,j in zip(important_features, feature_importance)]
     feature_df = pd.DataFrame(data=feature_res, columns=['feature', 'mean_importance'])
     feature_df.to_csv('data/miRNA_feature_importance.csv')
-
+    print(f"{np.mean(out_cvals, axis=1)} +/- {2*np.std(out_cvals, axis=1)/np.sqrt(5)}")
+    print(log_ranks)
+    print(f"{np.mean(log_ranks)} +/- {2*np.std(log_ranks)/np.sqrt(5)}")
     return out_cvals
 
 
 if __name__ == '__main__':
 
-    res = main(5)
+    main(5)
 
-    print(f"{np.mean(res, axis=1)} +/- {2*np.std(res, axis=1)/np.sqrt(5)}")
+    

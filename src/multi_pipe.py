@@ -1,12 +1,13 @@
-from train import regression_evaluate, rsf_train, mean_predictions, reorder
+from train import regression_evaluate, rsf_train, mean_predictions, reorder, log_rank, c_index_scorer
 from sksurv.util import Surv
+from sklearn.inspection import permutation_importance
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 from miRNA_pipe import miRNA_load_data
 from clinical_pipe import clinical_load_data, impute_scale
 from mRNA_pipe import mRNA_load_data
-from util import n_equal_slices, t_test_feature_selection, TruSight170, pearson_feature_selection
+from util import n_equal_slices, t_test_feature_selection, TruSight170, pearson_feature_selection, kaplan_splitting
 from sksurv.metrics import concordance_index_censored
 import tqdm
 
@@ -42,17 +43,17 @@ def early_fusion(DataFrames, train_bool) -> list:
 
 
     data = combined_data.loc[:, ~combined_data.columns.isin(['case_id', 'label', 'time','primary_diagnosis_Squamous cell carcinoma, spindle cell'])].values
-    # print(combined_data.loc[:, ~combined_data.columns.isin(['case_id', 'label', 'time','primary_diagnosis_Squamous cell carcinoma, spindle cell'])].columns.tolist())
-
-    labels = combined_data['label'].values
-    times = combined_data['time'].values
-
+    labels = combined_data['label'].values.astype(float)
+    times = combined_data['time'].values.astype(float)
+    important_features = list(combined_data.loc[:, ~combined_data.columns.isin(['case_id', 'label', 'time','primary_diagnosis_Squamous cell carcinoma, spindle cell'])].columns)
     train_set = data[train_bool]
     train_labels = labels[train_bool]
     train_times = times[train_bool]
     test_set = data[~train_bool]
     test_times = times[~train_bool]
     test_labels = labels[~train_bool]
+    survival_train = Surv.from_arrays(event=train_labels, time=train_times)
+    survival_test = Surv.from_arrays(event=test_labels, time=test_times)
 
     print(train_set.shape)
     print(test_set.shape)
@@ -60,14 +61,25 @@ def early_fusion(DataFrames, train_bool) -> list:
     survival_train = Surv.from_arrays(event=train_labels, time=train_times)
 
     grid_search = rsf_train(train_set, survival_train)
-
+    train_risk = grid_search.predict(train_set)
+    test_risk = grid_search.predict(test_set)
+    # print(train_labels)
+    # print(np.sum(np.isnan(train_labels)))
+    # print(np.sum(np.isnan(train_risk)))
+    # print(np.sum(np.isnan(train_times)))
+    group1, group2 = kaplan_splitting(train_labels, train_times, train_risk, test_labels, test_times, test_risk)
+    lr = log_rank(group1, group2).pvalue
+            
     res = regression_evaluate(grid_search, test_set, test_labels, test_times)
-
-
-    return res
+    result = permutation_importance(grid_search.best_estimator_, test_set, survival_test, n_repeats=10, random_state=42, scoring=c_index_scorer)
+    feature_importance = list(result.importances_mean)
+    return res, lr, important_features, feature_importance
 
 def late_fusion(DataFrames, train_bool) -> list:
-    '''function to implement late fusion of different data types and return the resulting c-index on the 
+    '''
+    this has not been updated to include log-rank and feature importance
+
+    function to implement late fusion of different data types and return the resulting c-index on the 
     test set, returns the result from sksurv.metrics.concordance_index_censored
     
     :param list DataFrames: a list of pd.DataFrame objects in a preprocessed form, each should contain the preprocessed data and columns 'label', 'time', 'case_id' 
@@ -115,7 +127,7 @@ def late_fusion(DataFrames, train_bool) -> list:
     risk_scores = mean_predictions(models, test_set, shapes)
     c_index = concordance_index_censored(test_labels == 1, test_times, risk_scores)
     
-    return c_index
+    return c_index, np.nan, np.nan, np.nan
 
 def load_all() -> dict:
     '''
@@ -177,7 +189,10 @@ def multi_training(data_dict, seed: int, fusion_type: str, datatypes: list) -> l
     slices = n_equal_slices(len(clinical_df), 5)
 
     c_vals = []
-
+    log_ranks = []
+    important_features = []
+    feature_importance = []
+    
     for bound in slices:
 
         
@@ -211,21 +226,27 @@ def multi_training(data_dict, seed: int, fusion_type: str, datatypes: list) -> l
         if fusion_type == 'late':
             res = late_fusion(arg, train_bool)
         print(res[0])
-        c_vals.append(res[0])
-
-    return c_vals
+        c_vals.append(res[0][0])
+        log_ranks.append(res[1])
+        important_features += res[2]
+        feature_importance += res[3]
+    feature_res =[[i,j] for i,j in zip(important_features, feature_importance)]
+    feature_df = pd.DataFrame(data=feature_res, columns=['feature', 'mean_importance'])
+    feature_df.to_csv(f'data/{'_'.join(datatypes)}_feature_importance.csv')
+    return c_vals, log_ranks
 
 def main():
     seed = 5
-    fusion_type = 'late'
+    fusion_type = 'early'
     combinations = [['clinical', 'mrna'],['clinical', 'mirna'], ['clinical', 'mirna', 'mrna'], ['mirna', 'mrna']]
 
     data_dict = load_all()
 
     for datatypes in combinations:
         print(datatypes)
-        res = multi_training(data_dict, seed, fusion_type, datatypes)
+        res, log_ranks = multi_training(data_dict, seed, fusion_type, datatypes)
         print(f"{np.mean(res)} +/- {2*np.std(res)/np.sqrt(5)}")
+        print(f"{np.mean(log_ranks)} +/- {2*np.std(log_ranks)/np.sqrt(5)}")
         print("======================================================")
 
 if __name__ == '__main__':

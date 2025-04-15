@@ -6,7 +6,7 @@ import glob
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from sklearn.inspection import permutation_importance
-from train import regression_evaluate, rsf_train, c_index_scorer
+from train import regression_evaluate, rsf_train, c_index_scorer, log_rank
 from util import n_equal_slices, optimal_risk_split, kaplan_splitting
 from sksurv.util import Surv
 
@@ -375,18 +375,23 @@ def clinical_load_data() -> pd.DataFrame:
 
 def main(seed):
     c_vals = [] # store c-index for each test set
+    log_ranks = []
     features = [] # store the feature importance for each test set
+    feature_names = []
     data = clinical_load_data()
+    print(data.columns)
     # print(data.info())
     rs = np.random.RandomState(np.random.MT19937(np.random.SeedSequence(seed)))
     random_order = np.arange(0,len(data))
     rs.shuffle(random_order)
     slices = n_equal_slices(len(data), 5)
-    
+    # iterations = 30
+    # for i in range(iterations):
     for i,bound in enumerate(slices):
 
-        
+        # rs.shuffle(random_order)
         test_set = random_order[bound[0]:bound[1]]
+        # test_set = random_order[:len(random_order)//5]
         print(test_set.shape)
 
         test_bool = np.array([True if i in test_set else False for i in range(len(data))], dtype=bool)
@@ -416,17 +421,21 @@ def main(seed):
         group1, group2 = kaplan_splitting(train_labels, train_times, train_risk, test_labels, test_times, test_risk)
         group1.to_csv(f'data/kaplan/RSF_clinical_test_set_{i}_group1.csv', index_label=False)
         group2.to_csv(f'data/kaplan/RSF_clinical_test_set_{i}_group2.csv', index_label=False)
-        features.append(result.importances_mean)
+        features += list(result.importances_mean)
+        feature_names += list(data.columns[~data.columns.isin(['case_id', 'label', 'time'])])
+        lr = log_rank(group1, group2).pvalue
 
         print(res[0])
+        log_ranks.append(lr)
         c_vals.append(res[0])
+
     
     print(f"{np.mean(c_vals)} +/- {2*np.std(c_vals)/np.sqrt(5)}")
-    mean_feature = np.mean(features, axis=0)
-    feature_unc = 2*np.std(features, axis=0)/np.sqrt(5)
+    print(log_ranks)
+    print(f"{np.mean(log_ranks)} +/- {2*np.std(log_ranks)/np.sqrt(5)}")
     
-    feature_res =[[i,j,k] for i,j,k in zip(data.columns, mean_feature, feature_unc)]
-    feature_df = pd.DataFrame(data=feature_res, columns=['feature', 'mean_importance', 'uncertainty'])
+    feature_res =[[i,j] for i,j in zip(feature_names, features)]
+    feature_df = pd.DataFrame(data=feature_res, columns=['feature', 'mean_importance'])
     feature_df.to_csv('data/clinical_feature_importance.csv')
 
 if __name__ == '__main__':

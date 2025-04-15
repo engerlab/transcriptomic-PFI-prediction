@@ -399,6 +399,71 @@ def copeland_method(votes, names):
 
     return result
 
+def label_patients(ids, statuses, dtfs, dtds, causes, cutoff):
+    '''
+    function to label patients for a classification problem, patients who die before the cutoff are labeled as 1
+    and patients who die after the cutoff are labeled as 0. Patients who are censored before the cutoff are dropped 
+    from the set. 
+
+    :param list ids: unique ids for each patient, in our case this is usually case_submitter_id
+    :param list status: the vital status of the patients at time of last followup
+    :param list dtf: the days to last follow up of that patient
+    :param list dtd: the days to death of the patient, if patient did not die it should be nan
+    :param list cause: the cause of death, right now this is not being used
+    :param int cutoff: the time in days that is used as the cutoff for classification
+    '''
+
+
+    labels = []
+    days_to_event = []
+    censoring = []
+    # going to start by ignoring the censored data
+    # so patients that have vital status of alive but their last follow up was less than two years we will remove them from training and testing
+    # we lose ~130 cases this way
+    for i,id in enumerate(ids):
+        
+        # row = combined_data.loc[combined_data['case_submitter_id'] == id, ['vital_status', 'days_to_last_follow_up', 'days_to_death', 'patient_death_reason']]
+        # print(combined_data.loc[combined_data['case_id'] == id, ['vital_status', 'days_to_last_follow_up', 'days_to_death']])
+        # try:
+        #     status = row['vital_status'].item()
+        #     dtd = row['days_to_death'].item()
+        #     dtf = row['days_to_last_follow_up'].item()
+        #     cause = row['patient_death_reason'].item()
+        # except KeyError:
+        #     print(row)
+        #     break
+
+        # if cause == 'Other non-malignant disease':
+        #     continue
+        status = statuses[i]
+        dtd = dtds[i]
+        dtf = dtfs[i]
+        
+
+        if status == 'Dead' and dtd < cutoff:
+            labels.append((id, 1, dtd))
+            days_to_event.append(dtd)
+            censoring.append(1)
+
+        elif status == 'Dead' and (dtd > cutoff):
+            labels.append((id, 0, dtd))
+            days_to_event.append(dtd)
+            censoring.append(1)
+
+        elif status == 'Alive' and dtf > cutoff:
+            labels.append((id, 0, dtf))
+            days_to_event.append(dtf)
+            censoring.append(0)
+
+        elif status == 'Alive' and dtf < cutoff:
+            days_to_event.append(dtf)
+            censoring.append(0)
+
+        else:
+            days_to_event.append(np.nan)
+            censoring.append(0)
+
+    return labels, days_to_event, censoring
 
 def overlap(hist1, hist2, bin_width) -> float:
     '''calculate the overlap between two discrete probability distributions
@@ -510,6 +575,11 @@ def kaplan_splitting(train_labels, train_times, train_risk_scores, test_labels, 
     group1 = patients.loc[patients['risk'] >= threshold]
     group2 = patients.loc[patients['risk'] < threshold]
 
+    # xgroup1, sgroup1, cgroup1 = kaplan_meier_estimator(group1['censored']==1, group1['days_to_event'], conf_type='log-log')
+    # xgroup2, sgroup2, cgroup2 = kaplan_meier_estimator(group2['censored']==1, group2['days_to_event'], conf_type='log-log')
+    # pvalue = log_rank_split(threshold, test_labels, test_times, test_risk_scores)
+
+    # ret_df
     return group1, group2
 
 
@@ -518,10 +588,10 @@ if __name__ == '__main__':
     features1 = np.array([[1, 2, 3], [0.75, 3, 6], [0.5,3,5,]])
     features2 = np.array([[1, 4, 3], [0.75, 5, 6], [0.5,3,7,]])
     times = np.array([[1],[2],[3]])
-    print(times.shape)
-    print(features1.shape)
-    print(stats.ttest_ind(features1, features2, axis=0, equal_var=False).pvalue)
-    print(stats.pearsonr(features1, times, axis=0))
+    # print(times.shape)
+    # print(features1.shape)
+    # print(stats.ttest_ind(features1, features2, axis=0, equal_var=False).pvalue)
+    # print(stats.pearsonr(features1, times, axis=0))
     np.random.seed(0)
     censored = np.random.randint(0,2, size=100)
     risk_score = np.random.random(100)
