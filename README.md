@@ -7,19 +7,33 @@ The data used can be downloaded from the GDC (https://portal.gdc.cancer.gov/) fo
 To work without making any changes to the code the data should be stored in the following structure
 
 Genomic_Outcome_Prediction_Public/
+
 ├─ data/
+
     ├─ Clinical/
+
     |    ├─ Clinicaldata/
+
     |    |    ├─ ** downloaded clinical data following instruction
+
     ├─ mRNA/
+    
     |    ├─ downloads
+    
     |    |    ├─ primary_tumor
+    
     |    |    |    ├─ ** downloaded mRNA data following instruction
+    
     ├─ miRNA/
+    
     |    ├─ downloads
+    
     |    |       ├─ primary_tumor
+    
     |    |       |     ├─ ** downloaded mRNA data following instruction
+    
 ├─ labels/
+
 ├─ src/
 
 
